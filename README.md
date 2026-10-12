@@ -14,7 +14,7 @@ using a teacher model.
 - **Auto-retry** — optional `--retry_until_complete` flag to keep retrying until every problem has exactly *N* samples
 - **Thinking mode** — uses `apply_chat_template(enable_thinking=...)` for Qwen3 / Nemotron reasoning models
 - **Dual mode** — local vLLM server *or* any remote OpenAI-compatible API (e.g. cloud endpoints)
-- **Code + Math** — separate dataset builders for code/SWE and math reasoning tasks
+- **Code + Math** — works with any problem domain
 
 ---
 
@@ -25,11 +25,6 @@ distillation-pipeline/
 ├── distill_solutions.py              # Core distillation engine
 ├── run_distill.sh                    # Orchestration script (starts vLLM + runs distillation)
 ├── requirements.txt
-│
-├── prepare_dataset/
-│   ├── prepare_code_distill_dataset.py    # v1 — 20K samples (3 sources)
-│   └── prepare_code_distill_dataset_v2.py # v2 — 10K samples, all prompts < 8K tokens
-│
 └── slurm/
     ├── slurm_distill_kuma.sh         # SLURM job template for EPFL Kuma
     └── batch_launch_distill.sh       # Submit one job per teacher model
@@ -46,34 +41,36 @@ pip install -r requirements.txt
 # vLLM requires a CUDA-capable GPU; see https://docs.vllm.ai/en/latest/getting_started/installation.html
 ```
 
-### 2. Prepare the dataset
+### 2. Prepare your dataset
 
-**v1 (20K samples, code/SWE):**
+The pipeline expects a JSONL file where each line is a JSON object with at least these fields:
 
-```bash
-python prepare_dataset/prepare_code_distill_dataset.py \
-    --output data/code_distill_ready.jsonl
+| Field | Required | Description |
+|---|---|---|
+| `problem` | yes | Raw problem text (used as fallback user message) |
+| `prompt` | yes | User message passed directly to the teacher model |
+| `answer` | yes | Reference answer / golden patch |
+| `original_solution` | no | Original solution from the source dataset |
+| `source` | yes | String identifier for the dataset source |
+| `index` | yes | Unique integer index across the full dataset |
+| `metadata` | no | Any extra fields (difficulty, license, etc.) |
+
+Example item:
+
+```json
+{
+  "problem": "Write a Python function that reverses a linked list.",
+  "prompt": "Write a Python function that reverses a linked list.",
+  "answer": "def reverse(head): ...",
+  "original_solution": "def reverse(head): ...",
+  "source": "my_dataset",
+  "index": 0,
+  "metadata": {"difficulty": "easy"}
+}
 ```
 
-**v2 (10K samples, all prompts ≤ 8K tokens):**
-
-```bash
-python prepare_dataset/prepare_code_distill_dataset_v2.py \
-    --tokenizer_path /path/to/your/tokenizer \
-    --output data/code_distill_ready_v2.jsonl
-```
-
-Each item in the output JSONL contains:
-
-| Field | Description |
-|---|---|
-| `problem` | Raw problem text |
-| `prompt` | User message passed to the teacher (same as `problem` for code tasks) |
-| `answer` | Reference answer / golden patch |
-| `original_solution` | Original solution from the source dataset |
-| `source` | Dataset source identifier |
-| `index` | Global integer index |
-| `metadata` | Source-specific metadata (difficulty, license, etc.) |
+When `prompt` is present the pipeline passes it directly to the model (no wrapping).
+When it is absent the pipeline wraps `problem` in a math `\\boxed{}` template.
 
 ### 3. Run distillation
 
@@ -238,5 +235,3 @@ python distill_solutions.py \
 ## License
 
 This pipeline code is released under the MIT License.
-The datasets used for building the distillation set are subject to their own licenses
-(see the respective HuggingFace dataset cards).
